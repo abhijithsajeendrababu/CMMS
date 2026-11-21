@@ -4,8 +4,11 @@ from pathlib import Path
 
 
 class CMmsDatabase:
-    def __init__(self, db_path="cmms.db"):
-        self.db_path = db_path
+    def __init__(self, db_path=None):
+        self.db_path = (
+            Path(db_path) if db_path is not None
+            else Path(__file__).resolve().parent / "cmms.db"
+        )
         self.conn = None
         self.cursor = None
         self.init_db()
@@ -112,7 +115,10 @@ class CMmsDatabase:
 
     def get_maintenance_record(self, part_id):
         self.cursor.execute('''
-            SELECT * FROM maintenance_records WHERE part_id = ?
+            SELECT * FROM maintenance_records
+            WHERE part_id = ?
+            ORDER BY id DESC
+            LIMIT 1
         ''', (part_id,))
         return self.cursor.fetchone()
 

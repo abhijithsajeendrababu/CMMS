@@ -22,14 +22,19 @@ from __future__ import annotations
 import os
 import queue
 import random
+import sqlite3
 import sys
 import threading
 import time
 import tkinter as tk
-from datetime import datetime, timezone
-from tkinter import ttk
+from datetime import date, datetime, timezone
+from pathlib import Path
+from tkinter import messagebox, ttk
 
-sys.path.insert(0, os.path.dirname(__file__))
+_WORKSPACE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(_WORKSPACE_DIR))
+sys.path.insert(0, str(_WORKSPACE_DIR / "CMMS"))
+from cmms_database import CMmsDatabase
 from prod import ProductionLine
 
 # ---------------------------------------------------------------------------
@@ -440,6 +445,15 @@ class HMI(tk.Tk):
         )
         self._btn_stop.pack(pady=5)
 
+        self._btn_maintenance = tk.Button(
+            btn_col, text="Maintenance",
+            bg=ACCENT, fg="#000", activebackground="#0097b8",
+            font=("Courier New", 10, "bold"),
+            width=14, relief="flat", cursor="hand2",
+            command=self._open_maintenance_dialog,
+        )
+        self._btn_maintenance.pack(pady=5)
+
         # ── Status line ────────────────────────────────────────────────
         self._status_var = tk.StringVar(value="■ Idle")
         tk.Label(
@@ -676,6 +690,170 @@ class HMI(tk.Tk):
     # ------------------------------------------------------------------
     # Controls
     # ------------------------------------------------------------------
+
+    def _open_maintenance_dialog(self) -> None:
+        db = None
+        try:
+            db = CMmsDatabase()
+            parts = db.get_all_parts()
+        except sqlite3.Error as exc:
+            messagebox.showerror(
+                "Maintenance", f"Could not load parts from the CMMS database:\n{exc}",
+                parent=self,
+            )
+            return
+        finally:
+            if db is not None:
+                db.close()
+
+        if not parts:
+            messagebox.showerror(
+                "Maintenance", "No parts are available in the CMMS database.",
+                parent=self,
+            )
+            return
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Record Maintenance")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        part_ids = {part["name"]: part["id"] for part in parts}
+        body = tk.Frame(dialog, bg=BG, padx=18, pady=14)
+        body.pack(fill="both", expand=True)
+        body.grid_columnconfigure(1, weight=1)
+
+        def add_label(text: str, row: int) -> None:
+            tk.Label(
+                body, text=text, bg=BG, fg=FG,
+                font=("Courier New", 9),
+            ).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=6)
+
+        add_label("Part", 0)
+        part_var = tk.StringVar(value=parts[0]["name"])
+        ttk.Combobox(
+            body, textvariable=part_var, values=list(part_ids),
+            state="readonly", width=30,
+        ).grid(row=0, column=1, sticky="ew", pady=6)
+
+        add_label("Last changed (YYYY-MM-DD)", 1)
+        last_changed_var = tk.StringVar(value=date.today().isoformat())
+        tk.Entry(
+            body, textvariable=last_changed_var, bg=PANEL, fg=FG,
+            insertbackground=FG, relief="flat", font=("Courier New", 10),
+        ).grid(row=1, column=1, sticky="ew", pady=6, ipady=5)
+
+        add_label("Frequency (days)", 2)
+        frequency_var = tk.StringVar(value="90")
+        tk.Entry(
+            body, textvariable=frequency_var, bg=PANEL, fg=FG,
+            insertbackground=FG, relief="flat", font=("Courier New", 10),
+        ).grid(row=2, column=1, sticky="ew", pady=6, ipady=5)
+
+        add_label("Performed by", 3)
+        performed_by_var = tk.StringVar()
+        tk.Entry(
+            body, textvariable=performed_by_var, bg=PANEL, fg=FG,
+            insertbackground=FG, relief="flat", font=("Courier New", 10),
+        ).grid(row=3, column=1, sticky="ew", pady=6, ipady=5)
+
+        add_label("Notes (optional)", 4)
+        notes = tk.Text(
+            body, height=4, width=30, bg=PANEL, fg=FG,
+            insertbackground=FG, relief="flat", font=("Courier New", 10),
+        )
+        notes.grid(row=4, column=1, sticky="ew", pady=6)
+
+        def save() -> None:
+            selected_part_id = part_ids.get(part_var.get())
+            if selected_part_id is None:
+                messagebox.showerror(
+                    "Invalid maintenance entry", "Select an existing part.",
+                    parent=dialog,
+                )
+                return
+
+            last_changed = last_changed_var.get().strip()
+            try:
+                parsed_date = date.fromisoformat(last_changed)
+                if parsed_date.isoformat() != last_changed:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror(
+                    "Invalid maintenance entry",
+                    "Enter a valid last-changed date in YYYY-MM-DD format.",
+                    parent=dialog,
+                )
+                return
+
+            try:
+                frequency = int(frequency_var.get().strip())
+                if frequency < 1:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror(
+                    "Invalid maintenance entry",
+                    "Frequency must be a whole number of at least 1 day.",
+                    parent=dialog,
+                )
+                return
+
+            performed_by = performed_by_var.get().strip()
+            if not performed_by:
+                messagebox.showerror(
+                    "Invalid maintenance entry", "Performed by is required.",
+                    parent=dialog,
+                )
+                return
+
+            notes_text = notes.get("1.0", "end-1c").strip() or None
+            db = None
+            try:
+                db = CMmsDatabase()
+                if db.get_part(selected_part_id) is None:
+                    raise ValueError("The selected part no longer exists.")
+                db.update_maintenance_record(
+                    selected_part_id, last_changed, frequency,
+                    performed_by, notes_text,
+                )
+            except (sqlite3.Error, ValueError) as exc:
+                messagebox.showerror(
+                    "Maintenance save failed",
+                    f"Could not save the maintenance record:\n{exc}",
+                    parent=dialog,
+                )
+                return
+            finally:
+                if db is not None:
+                    db.close()
+
+            messagebox.showinfo(
+                "Maintenance recorded",
+                "The maintenance record was saved successfully.",
+                parent=dialog,
+            )
+            dialog.destroy()
+
+        actions = tk.Frame(body, bg=BG)
+        actions.grid(row=5, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        tk.Button(
+            actions, text="Cancel",
+            bg=PANEL, fg=FG, activebackground=HEADER,
+            font=("Courier New", 9, "bold"),
+            relief="flat", cursor="hand2",
+            command=dialog.destroy,
+        ).pack(side="right", padx=(8, 0), ipadx=8, ipady=4)
+        tk.Button(
+            actions, text="Save",
+            bg=GREEN, fg="#000", activebackground="#22a844",
+            font=("Courier New", 9, "bold"),
+            relief="flat", cursor="hand2",
+            command=save,
+        ).pack(side="right", ipadx=8, ipady=4)
+
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
 
     def _start(self) -> None:
         if self._thread and self._thread.is_alive():
