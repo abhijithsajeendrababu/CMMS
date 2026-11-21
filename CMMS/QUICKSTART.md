@@ -5,7 +5,7 @@
 ### Option 1: Web Interface (Recommended)
 ```bash
 cd CMMS
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python cmms_app.py
 ```
 Then open your browser to: **http://localhost:5000**

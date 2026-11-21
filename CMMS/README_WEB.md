@@ -7,7 +7,7 @@
 1. **Install Dependencies** (first time only):
 ```bash
 cd CMMS
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 2. **Start the Web Server**:

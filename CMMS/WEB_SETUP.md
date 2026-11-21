@@ -11,7 +11,7 @@
 
 ```bash
 cd CMMS
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 ### 2. Run the Web Application
@@ -156,7 +156,7 @@ app.run(debug=True, host='localhost', port=5001)  # Use different port
 Ensure Flask is installed:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 ### Database Issues
